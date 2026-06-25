@@ -1,0 +1,293 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+<title>Masa líquida + cuerpo rojo v2</title>
+<style>
+  html, body {
+    margin:0; padding:0; width:100%; height:100%; overflow:hidden;
+    background:#f6f6f2; touch-action:none; font-family:system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
+  }
+  canvas { display:block; width:100vw; height:100vh; touch-action:none; }
+  .panel {
+    position:fixed; left:50%; bottom:22px; transform:translateX(-50%);
+    width:min(520px, calc(100vw - 44px));
+    background:rgba(255,255,255,.72); backdrop-filter:blur(10px);
+    border:1px solid rgba(0,0,0,.08); border-radius:18px;
+    padding:12px 16px 13px; box-sizing:border-box;
+    box-shadow:0 12px 30px rgba(0,0,0,.08);
+    user-select:none;
+  }
+  .row { display:flex; justify-content:space-between; align-items:center; margin-bottom:6px; font-size:13px; color:#222; }
+  input[type="range"] { width:100%; accent-color:#111; }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div class="panel">
+  <div class="row"><span>Vida / reacción</span><strong id="val">70</strong></div>
+  <input id="intensity" type="range" min="1" max="100" value="70" />
+</div>
+<script>
+const canvas = document.getElementById('c');
+const ctx = canvas.getContext('2d');
+const slider = document.getElementById('intensity');
+const val = document.getElementById('val');
+let W=0,H=0,DPR=1;
+
+function resize(){
+  DPR = Math.min(window.devicePixelRatio || 1, 2);
+  W = window.innerWidth; H = window.innerHeight;
+  canvas.width = W * DPR; canvas.height = H * DPR;
+  ctx.setTransform(DPR,0,0,DPR,0,0);
+  setupBlob();
+}
+window.addEventListener('resize', resize);
+
+const blob = { cx:0, cy:0, r:150, points:[] };
+const red = { x:0, y:0, vx:0, vy:0, r:55, drag:false, inside:false, pull:0, squish:0, stretchX:1, stretchY:1, rot:0 };
+let pointer = { active:false, x:0, y:0, px:0, py:0, vx:0, vy:0, id:null, kind:'mouse' };
+let lastT = performance.now();
+
+function setupBlob(){
+  blob.cx = W*0.5;
+  blob.cy = H*0.46;
+  blob.r = Math.min(W,H)*0.19;
+  blob.r = Math.max(105, Math.min(blob.r, 190));
+  blob.points = [];
+  const n = 96;
+  for(let i=0;i<n;i++){
+    const a = i/n * Math.PI*2;
+    blob.points.push({a, off:0, v:0});
+  }
+  if(!red._placed){
+    red.x = W*0.5 + blob.r*1.9;
+    red.y = blob.cy;
+    red._placed = true;
+  }
+  red.r = Math.max(34, blob.r*0.34);
+}
+
+function intensity(){ return Number(slider.value)/100; }
+slider.addEventListener('input', ()=> val.textContent = slider.value);
+
+function getPos(e){
+  const t = e.touches ? e.touches[0] : e;
+  return {x:t.clientX, y:t.clientY, kind:e.pointerType || (e.touches?'touch':'mouse')};
+}
+
+function down(e){
+  e.preventDefault();
+  const p = getPos(e);
+  pointer.active=true; pointer.x=pointer.px=p.x; pointer.y=pointer.py=p.y; pointer.vx=pointer.vy=0; pointer.kind=p.kind;
+  const d = Math.hypot(p.x-red.x, p.y-red.y);
+  if(d < red.r*1.75){ red.drag = true; }
+}
+function move(e){
+  if(!pointer.active) return;
+  e.preventDefault();
+  const p = getPos(e);
+  pointer.vx = p.x - pointer.x; pointer.vy = p.y - pointer.y;
+  pointer.px = pointer.x; pointer.py = pointer.y; pointer.x = p.x; pointer.y = p.y;
+}
+function up(e){
+  pointer.active=false; red.drag=false;
+}
+canvas.addEventListener('pointerdown', down, {passive:false});
+canvas.addEventListener('pointermove', move, {passive:false});
+canvas.addEventListener('pointerup', up);
+canvas.addEventListener('pointercancel', up);
+canvas.addEventListener('touchstart', down, {passive:false});
+canvas.addEventListener('touchmove', move, {passive:false});
+canvas.addEventListener('touchend', up);
+
+function angleDiff(a,b){
+  let d = a-b;
+  while(d>Math.PI) d-=Math.PI*2;
+  while(d<-Math.PI) d+=Math.PI*2;
+  return d;
+}
+
+function update(dt){
+  const I = intensity();
+  const touchScale = pointer.kind === 'touch' ? 0.55 : 1;
+
+  // Cuerpo rojo: arrastre directo suavizado.
+  if(red.drag && pointer.active){
+    const tx = pointer.x, ty = pointer.y;
+    red.vx += (tx - red.x) * 0.34;
+    red.vy += (ty - red.y) * 0.34;
+  }
+
+  // Atracción suave hacia la masa negra cuando se acerca.
+  const dx = blob.cx - red.x, dy = blob.cy - red.y;
+  const dist = Math.hypot(dx,dy) || 1;
+  const near = Math.max(0, 1 - (dist - blob.r*0.15) / (blob.r*1.7));
+  const capture = Math.max(0, 1 - Math.abs(dist - blob.r*0.62)/(blob.r*0.85));
+  red.pull += (near - red.pull) * 0.07;
+  if(!red.drag && near > .15){
+    red.vx += dx/dist * near * I * 1.5;
+    red.vy += dy/dist * near * I * 1.5;
+  }
+  if(red.drag && near > .2){
+    red.vx += dx/dist * near * I * 0.7;
+    red.vy += dy/dist * near * I * 0.7;
+  }
+
+  red.x += red.vx; red.y += red.vy;
+  red.vx *= red.drag ? 0.62 : 0.91;
+  red.vy *= red.drag ? 0.62 : 0.91;
+
+  // deformación del cuerpo rojo: se estira con el arrastre y se aplasta al entrar en la masa negra
+  const sp = Math.min(1, Math.hypot(red.vx, red.vy) / 42);
+  const enter = Math.max(0, 1 - dist/(blob.r*1.03));
+  red.squish += ((sp*0.30 + enter*0.42) - red.squish) * 0.12;
+  red.rot = Math.atan2(red.vy, red.vx || 0.0001);
+  red.stretchX += ((1 + red.squish) - red.stretchX) * 0.14;
+  red.stretchY += ((1 - red.squish*0.42) - red.stretchY) * 0.14;
+
+  // La masa negra reacciona tanto al dedo como al cuerpo rojo.
+  let touchInfluence = 0;
+  let ta = 0;
+  if(pointer.active){
+    const px = pointer.x - blob.cx, py = pointer.y - blob.cy;
+    const pd = Math.hypot(px,py);
+    ta = Math.atan2(py,px);
+    touchInfluence = Math.max(0, 1 - Math.abs(pd - blob.r)/(blob.r*.95));
+  }
+
+  const ra = Math.atan2(red.y-blob.cy, red.x-blob.cx);
+  const redSurfaceDist = dist - blob.r;
+  const redInfluence = Math.max(0, 1 - Math.abs(redSurfaceDist)/(blob.r*1.15));
+  const insideAmount = Math.max(0, 1 - dist/(blob.r*0.98));
+
+  for(const p of blob.points){
+    // resorte base
+    p.v += -p.off * (0.047 + I*0.028);
+    p.v *= 0.88 - I*0.045;
+
+    // dedo hunde/estira la pared si no está arrastrando el rojo
+    if(touchInfluence>0){
+      const ad = Math.abs(angleDiff(p.a, ta));
+      const fall = Math.exp(-(ad*ad)/(0.42));
+      const speed = Math.min(28, Math.hypot(pointer.vx,pointer.vy));
+      p.v += fall * touchInfluence * I * touchScale * (speed*0.18 + 1.65);
+    }
+
+    // cuerpo rojo deforma la pared negra: panza hacia afuera al acercarse, hueco al entrar.
+    if(redInfluence>0 || insideAmount>0){
+      const ad = Math.abs(angleDiff(p.a, ra));
+      const fallNarrow = Math.exp(-(ad*ad)/(0.30));
+      const fallWide = Math.exp(-(ad*ad)/(0.95));
+      p.v += fallWide * redInfluence * I * 3.6;       // atracción / panza más notoria
+      p.v -= fallNarrow * insideAmount * I * 4.1;     // cavidad cuando entra
+      p.v += fallNarrow * capture * I * 1.05;
+    }
+  }
+
+  // suavizado entre puntos para superficie más líquida
+  const pts = blob.points;
+  const copy = pts.map(p=>p.off);
+  for(let i=0;i<pts.length;i++){
+    const prev = copy[(i-1+pts.length)%pts.length];
+    const next = copy[(i+1)%pts.length];
+    pts[i].off += ((prev+next)*0.5 - pts[i].off) * 0.145;
+    pts[i].off = Math.max(-blob.r*0.46, Math.min(blob.r*0.58, pts[i].off));
+    pts[i].off += pts[i].v;
+  }
+}
+
+function blobPath(){
+  const pts = blob.points.map(p=>{
+    const rr = blob.r + p.off;
+    return {x:blob.cx + Math.cos(p.a)*rr, y:blob.cy + Math.sin(p.a)*rr};
+  });
+  ctx.beginPath();
+  for(let i=0;i<pts.length;i++){
+    const p0 = pts[(i-1+pts.length)%pts.length];
+    const p1 = pts[i];
+    const p2 = pts[(i+1)%pts.length];
+    const mx = (p1.x+p2.x)/2, my=(p1.y+p2.y)/2;
+    if(i===0) ctx.moveTo((p0.x+p1.x)/2, (p0.y+p1.y)/2);
+    ctx.quadraticCurveTo(p1.x,p1.y,mx,my);
+  }
+  ctx.closePath();
+}
+
+function draw(){
+  ctx.clearRect(0,0,W,H);
+
+  // sombra muy sutil
+  ctx.save();
+  ctx.globalAlpha = 0.08;
+  ctx.translate(0,10);
+  blobPath(); ctx.fillStyle='#000'; ctx.fill();
+  ctx.restore();
+
+  // masa negra
+  blobPath();
+  ctx.fillStyle = '#050505';
+  ctx.fill();
+
+  // si el rojo está cerca, dibujamos un puente de tensión rojo/negro apenas perceptible
+  const dx = red.x-blob.cx, dy=red.y-blob.cy;
+  const d = Math.hypot(dx,dy)||1;
+  const ux = dx/d, uy=dy/d;
+  const near = Math.max(0, 1 - Math.abs(d - blob.r)/(blob.r*1.05));
+  if(near > 0.02){
+    const sx = blob.cx + ux*(blob.r*0.86);
+    const sy = blob.cy + uy*(blob.r*0.86);
+    const px = -uy, py = ux;
+    const w1 = red.r*(0.22 + near*0.22);
+    const w2 = red.r*(0.15 + near*0.18);
+    ctx.save();
+    ctx.globalAlpha = 0.18 * near;
+    ctx.beginPath();
+    ctx.moveTo(sx + px*w2, sy + py*w2);
+    ctx.bezierCurveTo((sx+red.x)/2 + px*w1, (sy+red.y)/2 + py*w1, red.x + px*w1, red.y + py*w1, red.x + px*red.r*.55, red.y + py*red.r*.55);
+    ctx.lineTo(red.x - px*red.r*.55, red.y - py*red.r*.55);
+    ctx.bezierCurveTo(red.x - px*w1, red.y - py*w1, (sx+red.x)/2 - px*w1, (sy+red.y)/2 - py*w1, sx - px*w2, sy - py*w2);
+    ctx.closePath();
+    ctx.fillStyle = '#0a0a0a';
+    ctx.fill();
+    ctx.restore();
+  }
+
+  // cuerpo rojo: se ve incluso dentro de la masa negra, como objeto contenido.
+  ctx.save();
+  ctx.translate(red.x, red.y);
+  ctx.rotate(red.rot);
+  ctx.scale(red.stretchX, red.stretchY);
+  ctx.beginPath();
+  ctx.arc(0, 0, red.r, 0, Math.PI*2);
+  ctx.fillStyle = '#d81717';
+  ctx.fill();
+  // borde interno suave para que parezca sumergido cuando entra
+  const inside = Math.max(0, 1 - d/(blob.r*.98));
+  if(inside>0){
+    ctx.globalAlpha = inside * 0.24;
+    ctx.lineWidth = Math.max(8, red.r*0.20);
+    ctx.strokeStyle = '#050505';
+    ctx.stroke();
+  }
+  // brillo mínimo en rojo para lectura, acompaña la deformación
+  const g = ctx.createRadialGradient(-red.r*.28, -red.r*.32, red.r*.1, 0, 0, red.r);
+  g.addColorStop(0,'rgba(255,255,255,.20)');
+  g.addColorStop(.55,'rgba(255,255,255,0)');
+  g.addColorStop(1,'rgba(0,0,0,.10)');
+  ctx.beginPath(); ctx.arc(0, 0, red.r, 0, Math.PI*2); ctx.fillStyle=g; ctx.fill();
+  ctx.restore();
+}
+
+function loop(t){
+  const dt = Math.min(32, t-lastT); lastT=t;
+  update(dt/16.67);
+  draw();
+  requestAnimationFrame(loop);
+}
+resize();
+requestAnimationFrame(loop);
+</script>
+</body>
+</html>
