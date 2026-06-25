@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
-<title>Masa líquida táctil v2 sin estela</title>
+<title>Masa líquida táctil v2 suave móvil</title>
 <style>
   html, body {
     margin: 0;
@@ -34,7 +34,7 @@
 </head>
 <body>
 <canvas id="c"></canvas>
-<div class="hint">Arrastrá sobre la masa: se estira, se abre y vuelve sola</div>
+<div class="hint">Arrastrá sobre la masa: respuesta suave en celular/tablet</div>
 <script>
 const canvas = document.getElementById('c');
 const ctx = canvas.getContext('2d');
@@ -57,7 +57,7 @@ const N = 96;
 let points = [];
 let center = {x:0,y:0};
 let baseRadius = 0;
-let pointer = {down:false, x:0, y:0, px:0, py:0, vx:0, vy:0, speed:0};
+let pointer = {down:false, touch:false, x:0, y:0, px:0, py:0, vx:0, vy:0, speed:0, rawX:0, rawY:0};
 let cuts = [];
 
 function buildBlob(){
@@ -93,20 +93,30 @@ function onDown(e){
   e.preventDefault();
   const p = getEventPos(e);
   pointer.down = true;
-  pointer.x = pointer.px = p.x;
-  pointer.y = pointer.py = p.y;
+  pointer.touch = (e.pointerType === 'touch') || !!e.touches;
+  pointer.x = pointer.px = pointer.rawX = p.x;
+  pointer.y = pointer.py = pointer.rawY = p.y;
   pointer.vx = pointer.vy = pointer.speed = 0;
 }
 function onMove(e){
   e.preventDefault();
   const p = getEventPos(e);
-  pointer.vx = p.x - pointer.x;
-  pointer.vy = p.y - pointer.y;
+  pointer.touch = (e.pointerType === 'touch') || !!e.touches;
+  pointer.rawX = p.x;
+  pointer.rawY = p.y;
+
+  // En táctil suavizamos la posición para que no exagere por el tamaño/ruido del dedo.
+  const follow = pointer.touch ? 0.55 : 1.0;
+  const nx = pointer.x + (pointer.rawX - pointer.x) * follow;
+  const ny = pointer.y + (pointer.rawY - pointer.y) * follow;
+
+  pointer.vx = nx - pointer.x;
+  pointer.vy = ny - pointer.y;
   pointer.speed = Math.hypot(pointer.vx, pointer.vy);
   pointer.px = pointer.x;
   pointer.py = pointer.y;
-  pointer.x = p.x;
-  pointer.y = p.y;
+  pointer.x = nx;
+  pointer.y = ny;
   interact();
 }
 function onUp(){ pointer.down = false; }
@@ -137,19 +147,20 @@ function interact(){
     if(f > 0){
       const towardFinger = Math.cos(p.a-pushAng);
       const tangent = Math.sin(p.a-moveAng);
-      // lento: la superficie acompaña al dedo; fuerte: abre canal/hendidura
-      p.vr += f * (inside ? 12 : 5) * Math.sign(towardFinger || 1);
-      p.vr -= Math.abs(tangent) * f * pointer.speed * 0.22;
-      p.ox += pointer.vx * f * 0.26;
-      p.oy += pointer.vy * f * 0.26;
+      // En mouse conserva la sensación de la v2. En táctil baja aprox. a la mitad.
+      const k = pointer.touch ? 0.50 : 1.0;
+      p.vr += f * (inside ? 12 : 5) * k * Math.sign(towardFinger || 1);
+      p.vr -= Math.abs(tangent) * f * pointer.speed * 0.22 * k;
+      p.ox += pointer.vx * f * 0.26 * k;
+      p.oy += pointer.vy * f * 0.26 * k;
     }
   }
 
-  if(inside && pointer.speed > 16){
+  if(inside && pointer.speed > (pointer.touch ? 26 : 16)){
     cuts.push({
       ax:pointer.px, ay:pointer.py, bx:pointer.x, by:pointer.y,
       life:1,
-      width:Math.min(58, pointer.speed*2.4)
+      width:Math.min(58, pointer.speed*2.4*(pointer.touch ? 0.5 : 1))
     });
   }
 }
@@ -217,7 +228,7 @@ function draw(){
   ctx.fill();
   ctx.restore();
 
-  // Estela visual desactivada: se conservan exactamente los parámetros de deformación de v2.
+  // Estela visual desactivada. En táctil la fuerza baja aprox. a la mitad.
   // No dibujamos el canal blanco del dedo.
 }
 
