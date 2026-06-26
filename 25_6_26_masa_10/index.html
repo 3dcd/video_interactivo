@@ -1,0 +1,193 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
+<title>Organismo de capas táctil</title>
+<style>
+  html, body {
+    margin:0; width:100%; height:100%; overflow:hidden;
+    background:#f6f4ef; touch-action:none;
+    font-family:system-ui,-apple-system,BlinkMacSystemFont,sans-serif;
+  }
+  canvas { display:block; width:100vw; height:100vh; background:#f6f4ef; touch-action:none; }
+  .hint {
+    position:fixed; left:18px; bottom:72px;
+    color:rgba(0,0,0,.42); font-size:14px; line-height:1.3;
+    user-select:none; pointer-events:none;
+  }
+  .control {
+    position:fixed; left:50%; bottom:18px; transform:translateX(-50%);
+    width:min(560px, calc(100vw - 36px)); height:42px;
+    display:flex; align-items:center; gap:12px; padding:0 14px;
+    border-radius:999px; background:rgba(255,255,255,.55);
+    backdrop-filter:blur(10px); -webkit-backdrop-filter:blur(10px);
+    box-shadow:0 8px 28px rgba(0,0,0,.07), inset 0 0 0 1px rgba(0,0,0,.06);
+    color:rgba(0,0,0,.52); font-size:12px; user-select:none;
+  }
+  .control span { width:48px; }
+  input[type=range]{ flex:1; appearance:none; -webkit-appearance:none; height:24px; background:transparent; touch-action:none; }
+  input[type=range]::-webkit-slider-runnable-track{ height:6px; border-radius:99px; background:rgba(0,0,0,.18); }
+  input[type=range]::-webkit-slider-thumb{ -webkit-appearance:none; width:26px; height:26px; margin-top:-10px; border-radius:50%; background:#111; box-shadow:0 4px 10px rgba(0,0,0,.22); }
+  input[type=range]::-moz-range-track{ height:6px; border-radius:99px; background:rgba(0,0,0,.18); }
+  input[type=range]::-moz-range-thumb{ width:26px; height:26px; border:0; border-radius:50%; background:#111; box-shadow:0 4px 10px rgba(0,0,0,.22); }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div class="hint">Tres capas · una misma deformación · tocá y observá el eco interior</div>
+<div class="control"><span>Suave</span><input id="intensity" type="range" min="1" max="100" value="82" /><span id="intensityValue">82</span></div>
+<script>
+const canvas = document.getElementById('c');
+const ctx = canvas.getContext('2d');
+const intensityInput = document.getElementById('intensity');
+const intensityValue = document.getElementById('intensityValue');
+let intensity = Number(intensityInput.value)/100;
+intensityInput.addEventListener('input',()=>{ intensity=Number(intensityInput.value)/100; intensityValue.textContent=intensityInput.value; });
+let W=0,H=0,DPR=1;
+const N=112;
+let points=[];
+let center={x:0,y:0};
+let baseRadius=0;
+let pointer={down:false,touch:false,x:0,y:0,px:0,py:0,vx:0,vy:0,speed:0,rawX:0,rawY:0};
+let lastInteraction=0;
+
+function resize(){
+  DPR=Math.min(window.devicePixelRatio||1,2);
+  W=innerWidth; H=innerHeight;
+  canvas.width=W*DPR; canvas.height=H*DPR;
+  canvas.style.width=W+'px'; canvas.style.height=H+'px';
+  ctx.setTransform(DPR,0,0,DPR,0,0);
+  buildBlob();
+}
+window.addEventListener('resize', resize);
+
+function buildBlob(){
+  center.x=W/2; center.y=H/2;
+  baseRadius=Math.min(W,H)*0.25;
+  baseRadius=Math.max(112, Math.min(baseRadius, 210));
+  points=[];
+  for(let i=0;i<N;i++){
+    const a=i/N*Math.PI*2;
+    const r=baseRadius*(1+0.022*Math.sin(a*3));
+    points.push({a,r,tr:r,vr:0,ox:0,oy:0,vx:0,vy:0, echo1:0, echo2:0});
+  }
+}
+
+function getEventPos(e){ const t=e.touches?e.touches[0]:e; return {x:t.clientX,y:t.clientY}; }
+function onDown(e){ e.preventDefault(); const p=getEventPos(e); pointer.down=true; pointer.touch=(e.pointerType==='touch')||!!e.touches; pointer.x=pointer.px=pointer.rawX=p.x; pointer.y=pointer.py=pointer.rawY=p.y; pointer.vx=pointer.vy=pointer.speed=0; lastInteraction=performance.now(); }
+function onMove(e){
+  e.preventDefault(); if(!pointer.down) return;
+  const p=getEventPos(e); pointer.touch=(e.pointerType==='touch')||!!e.touches; pointer.rawX=p.x; pointer.rawY=p.y;
+  const follow=pointer.touch?0.55:1;
+  const nx=pointer.x+(pointer.rawX-pointer.x)*follow;
+  const ny=pointer.y+(pointer.rawY-pointer.y)*follow;
+  pointer.vx=nx-pointer.x; pointer.vy=ny-pointer.y; pointer.speed=Math.hypot(pointer.vx,pointer.vy);
+  pointer.px=pointer.x; pointer.py=pointer.y; pointer.x=nx; pointer.y=ny;
+  interact(); lastInteraction=performance.now();
+}
+function onUp(){ pointer.down=false; }
+canvas.addEventListener('pointerdown',onDown,{passive:false});
+canvas.addEventListener('pointermove',onMove,{passive:false});
+canvas.addEventListener('pointerup',onUp); canvas.addEventListener('pointercancel',onUp);
+canvas.addEventListener('touchstart',onDown,{passive:false}); canvas.addEventListener('touchmove',onMove,{passive:false}); canvas.addEventListener('touchend',onUp);
+document.querySelector('.control').addEventListener('pointerdown',e=>e.stopPropagation());
+document.querySelector('.control').addEventListener('pointermove',e=>e.stopPropagation());
+document.querySelector('.control').addEventListener('touchstart',e=>e.stopPropagation(),{passive:false});
+document.querySelector('.control').addEventListener('touchmove',e=>e.stopPropagation(),{passive:false});
+
+function interact(){
+  const dx=pointer.x-center.x, dy=pointer.y-center.y;
+  const pd=Math.hypot(dx,dy);
+  const influence=baseRadius*0.82;
+  const inside=pd<baseRadius*1.2;
+  const moveAng=Math.atan2(pointer.vy,pointer.vx);
+  const pushAng=Math.atan2(dy,dx);
+  for(const p of points){
+    const bx=center.x+Math.cos(p.a)*p.r;
+    const by=center.y+Math.sin(p.a)*p.r;
+    const d=Math.hypot(pointer.x-bx,pointer.y-by);
+    const f=Math.max(0,1-d/influence);
+    if(f>0){
+      const towardFinger=Math.cos(p.a-pushAng);
+      const tangent=Math.sin(p.a-moveAng);
+      const k=(pointer.touch?0.50:1.0)*intensity;
+      p.vr += f*(inside?11.5:5.2)*k*Math.sign(towardFinger||1);
+      p.vr -= Math.abs(tangent)*f*pointer.speed*0.20*k;
+      p.ox += pointer.vx*f*0.24*k;
+      p.oy += pointer.vy*f*0.24*k;
+    }
+  }
+}
+
+function step(){
+  const t=performance.now()*0.001;
+  const active = pointer.down ? 1 : Math.max(0, 1-(performance.now()-lastInteraction)/1700);
+  for(let i=0;i<N;i++){
+    const p=points[i];
+    const breathing=(0.12+0.58*intensity);
+    const heartbeat=(0.010+0.020*active)*Math.sin(t*(1.4+active*1.7) + p.a*2.0);
+    const organic=baseRadius*(1 + breathing*(0.018*Math.sin(t*1.55+p.a*3)+0.010*Math.cos(t*2.0+p.a*5)) + heartbeat);
+    p.tr=organic;
+    const prev=points[(i-1+N)%N], next=points[(i+1)%N];
+    const smooth=(prev.r+next.r)/2;
+    const force=(p.tr-p.r)*0.027+(smooth-p.r)*0.13;
+    p.vr=(p.vr+force)*0.885;
+    p.r+=p.vr;
+    p.ox=(p.ox+p.vx)*0.91; p.oy=(p.oy+p.vy)*0.91;
+    p.vx=-p.ox*0.024; p.vy=-p.oy*0.024;
+    // ecos internos: no son simulaciones separadas; son retrasos suaves del mismo movimiento.
+    const target1=(p.r-baseRadius)*0.78 + p.ox*0.10;
+    const target2=(p.r-baseRadius)*0.58 + p.oy*0.08;
+    p.echo1 += (target1-p.echo1)*0.105;
+    p.echo2 += (target2-p.echo2)*0.065;
+  }
+}
+
+function layerPath(scale, echoField, offsetScale=1){
+  const verts=points.map(p=>{
+    let rr=baseRadius*scale;
+    if(echoField===0) rr = p.r*scale;
+    if(echoField===1) rr = baseRadius*scale + p.echo1;
+    if(echoField===2) rr = baseRadius*scale + p.echo2;
+    const ox = echoField===0 ? p.ox*offsetScale : p.ox*offsetScale*0.35;
+    const oy = echoField===0 ? p.oy*offsetScale : p.oy*offsetScale*0.35;
+    return {x:center.x+Math.cos(p.a)*rr+ox, y:center.y+Math.sin(p.a)*rr+oy};
+  });
+  ctx.beginPath();
+  for(let i=0;i<N;i++){
+    const p0=verts[(i-1+N)%N], p1=verts[i], p2=verts[(i+1)%N];
+    const mid1={x:(p0.x+p1.x)/2,y:(p0.y+p1.y)/2};
+    const mid2={x:(p1.x+p2.x)/2,y:(p1.y+p2.y)/2};
+    if(i===0) ctx.moveTo(mid1.x, mid1.y);
+    ctx.quadraticCurveTo(p1.x,p1.y,mid2.x,mid2.y);
+  }
+  ctx.closePath();
+}
+
+function draw(){
+  ctx.clearRect(0,0,W,H);
+  // sombra mínima, para separar del fondo sin romper lo plano.
+  ctx.save();
+  layerPath(1,0,1);
+  ctx.fillStyle='#030303';
+  ctx.shadowColor='rgba(0,0,0,.14)';
+  ctx.shadowBlur=22; ctx.shadowOffsetY=14;
+  ctx.fill();
+  ctx.restore();
+  // capa exterior
+  layerPath(1,0,1);
+  ctx.fillStyle='#030303'; ctx.fill();
+  // capa intermedia: copia con retraso, menor radio
+  layerPath(0.62,1,0.72);
+  ctx.fillStyle='#8a8a8a'; ctx.fill();
+  // núcleo: copia con más retraso, menor radio + latido muy sutil
+  const pulse=1+0.022*Math.sin(performance.now()*0.0026) + (pointer.down?0.012*Math.sin(performance.now()*0.009):0);
+  layerPath(0.34*pulse,2,0.48);
+  ctx.fillStyle='#d81717'; ctx.fill();
+}
+function loop(){ step(); draw(); requestAnimationFrame(loop); }
+resize(); loop();
+</script>
+</body>
+</html>
